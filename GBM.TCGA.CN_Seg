@@ -1,0 +1,131 @@
+# Downloading necessary packages
+library(TCGAbiolinks)
+library(SummarizedExperiment)
+library(GenomicRanges)
+library(GenomicFeatures)
+library(dplyr)
+library(AnnotationDbi)
+library(doMC)
+
+# Source the functions for pulling in and converting TCGA data
+source ('/home/evem/CN_Seg/Scripts/Pull.convert.TCGA.functions.R')
+
+# Pulling in GBM data
+# GBM data now saved
+#TCGA.gbm.data <- pull_data_TCGA(project = "TCGA-GBM", save.filename = "/home/evem/CN_Seg/Outputs")
+# saveRDS
+gbm.data <- readRDS(file = "./gbm.data.rds")
+
+# Reading in LGG data
+lgg.data <- readRDS(file = "/home/evem/CN_Seg/Outputs/lgg.data.rds")
+
+
+#table(factor(gbm.data$copynumber$Chromosome))
+#levels(factor(gbm.data$copynumber$Chromosome))
+#gbm.data$copynumber[!grepl("chr",gbm.data$copynumber$Chromosome),]
+#gbm.data$copynumber[grepl("chr",gbm.data$copynumber$Chromosome),]
+
+# quick fix for GBM to remove any rows with "chr"
+gbm.data$copynumber[!grepl("chr",gbm.data$copynumber$Chromosome),] -> gbm.data$copynumber
+table(factor(gbm.data$copynumber$Chromosome))
+
+# Converting copy number gbm.data from data frame to GRanges object
+cn.gbm.grange <- df_to_GRanges(gbm.data$copynumber)
+
+# Manually adding CNcall metadata
+# >0.2= Amplification
+# <-0.2= Deletion
+# If other= Normal
+cn.gbm.grange$Call <- ifelse(mcols(cn.gbm.grange)$Segment_Mean > 0.2, 'Amplification',
+                             ifelse(mcols(cn.gbm.grange)$Segment_Mean < -0.2, 'Deletion', 'Normal'))
+
+# Renaming Call metadata column as CNcall
+names(mcols(cn.gbm.grange))[names(mcols(cn.gbm.grange)) == 'Call'] <- 'CNcall'
+
+# Renaming Sample metadata column
+names(mcols(cn.gbm.grange))[names(mcols(cn.gbm.grange)) == 'sample.ids'] <- 'Sample'
+
+
+# Converts expression data from SummarizedExperiment object to GRanges object
+# Sample IDs not needed
+exp.gbm.grange <- rowRanges(gbm.data$expression)
+
+
+# Source the function script for use below
+source ('./Scripts/exp2cn.source.R')
+
+# creates a granges object with chromosomes binned at the sizes of 1Mb
+chromosome.map <- read.delim("./Archive/chromosome.map")
+
+#creates a granges object with certain custom regions of interest
+#keep.extra.columns = TRUE tells the function to keep all columns from the data frame that aren't used to construct the data frame
+#ignore.strand= TRUE tells the function to ignore the strand information when creating granges object
+select.features <- read.delim("./Archive/select.features.txt")
+makeGRangesFromDataFrame(chromosome.map, keep.extra.columns = TRUE,ignore.strand=TRUE) -> chr.grange
+makeGRangesFromDataFrame(select.features, keep.extra.columns = TRUE,ignore.strand=TRUE) -> select.grange
+
+# Renaming metadata columns within cn.gbm.grange so works within segMatrix function
+names(mcols(cn.gbm.grange)) <- sub("Segment_Mean", "Seg.CN", names(mcols(cn.gbm.grange)))
+names(mcols(cn.gbm.grange)) <- sub("Num_Probes", "Num.markers", names(mcols(cn.gbm.grange)))
+
+
+# install.packages("./diffloop_1.10.0.tar.gz", repos = NULL, type="source", dependencies = T)
+# Renaming seqlevels in exp.gbm.grange so they match cn.gbm.grange
+seqlevels(exp.gbm.grange)
+## Rename 'seq2' to 'chr2' with a named vector.
+exp.gbm.grange.2 <- renameSeqlevels(exp.gbm.grange, sub("chr", "", seqlevels(exp.gbm.grange)))
+# Rename seqlevels in chr.grange and select.grange
+chr.grange.2 <- renameSeqlevels(chr.grange, sub("chr", "", seqlevels(chr.grange)))
+select.grange.2 <- renameSeqlevels(select.grange, sub("chr", "", seqlevels(select.grange)))
+
+#generates a list of matrices where individuals represented by columns and genes as rows
+#contains 4 slots:
+#seg.means= average CN ration within each segment
+#CN
+#CNcall= categorical calls representing aplifications/deletions etc
+#num.mark= number of markers within each segment
+segMatrix(exp.gbm.grange.2, cn.gbm.grange) -> seg.list.gbm
+segMatrix(chr.grange.2,cn.gbm.grange) -> seg.chr.list.gbm
+segMatrix(select.grange.2,cn.gbm.grange) -> seg.select.list.gbm
+
+# Remove NA values from each element of the list
+seg.select.list.gbm$seg.means <- na.omit(seg.select.list.gbm$seg.means)
+seg.select.list.gbm$CNcall <- na.omit(seg.select.list.gbm$CNcall)
+seg.select.list.gbm$num.mark <- na.omit(seg.select.list.gbm$num.mark)
+
+# Extract assay data from gbm.data$expression 
+exp.assay.data <- assay(gbm.data$expression, "tpm_unstrand")
+
+# Filtering genes
+dim(exp.assay.data)
+apply(exp.assay.data,1,gp.style.filter,fold.change=3, delta=10, prop=0.05, base=3, prop.base=0.05, na.rm = TRUE, neg.rm = TRUE) -> index
+filtered.gbm.data <- exp.assay.data[index,]
+dim(filtered.gbm.data)
+
+#create an index select and match genes
+#matches the row names of seg.list.gbm$CNcall and TCGA expression data
+#subsets data to only keep rows where the corresponding row in index is not missing
+### Think this is not correctly matching Ensembl gene IDs ###
+#match (rownames(seg.list.gbm$CNcall), rownames(gbm.data$expression)) -> index
+### Trying an alternative method to match gene IDs ###
+index <- match(rownames(seg.list.gbm$CNcall), rownames(gbm.data$expression))
+exp.gbm.grange.2[which(!is.na(index))] -> exp.gbm.grange.2
+gbm.data$expression[index[!is.na(index)],] -> gbm.data$expression
+seg.list.gbm$CNcall[which(!is.na(index)),] -> seg.list.gbm$CNcall
+seg.list.gbm$seg.means[which(!is.na(index)),] -> seg.list.gbm$seg.means
+
+#match the expression data column IDs to the available copy number sample IDs
+match(colnames(seg.list.gbm$CNcall), colnames(gbm.data$expression)) -> index 
+### when this is run turns index values to all NAs ###
+index <- match(colnames(seg.list.gbm$CNcall), colnames(gbm.data$expression))
+gbm.data$expression[,index[!is.na(index)]] -> select.exp.data
+
+
+#match the copy number sample IDs to the available expression data column IDs
+seg.list.gbm$CNcall -> matched.cn
+# seg.list.gbm$seg.means[,which(!is.na(index))] -> matched.seg.means
+seg.list.gbm$seg.means -> matched.seg.means
+
+
+# set the minumum number of samples possessing copy number changes 
+min.number.samples <- 5
