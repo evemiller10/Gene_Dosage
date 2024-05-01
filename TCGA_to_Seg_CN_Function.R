@@ -12,12 +12,15 @@ convert_TCGAdata_to_Seg_CN <- function(project_name) {
   source ('/home/evem/CN_Seg/Scripts/Pull.convert.TCGA.functions.R')
   
   # Pulling in data
-  TCGA.data <- pull_data_TCGA(project = project_name)
+  #TCGA.data <- pull_data_TCGA(project = project_name)
+file_path <- paste0("/home/evem/CN_Seg/TCGA_Data/TCGA.", project_name, ".data.rds")
+  TCGA.data <- readRDS(file = file_path)
+  
   
   #TCGA.data <- readRDS(file = "/home/evem/CN_Seg/Outputs/lgg.data.rds")
   
   # Save the data with the specific dataset name
-  saveRDS(TCGA.data, file = paste0("/home/evem/CN_Seg/TCGA_Data/", project_name, ".data.rds"))
+  #saveRDS(TCGA.data, file = paste0("/home/evem/CN_Seg/TCGA_Data/", project_name, ".data.rds"))
   
   TCGA.data$copynumber[!grepl("chr",TCGA.data$copynumber$Chromosome),] -> TCGA.data$copynumber
   table(factor(TCGA.data$copynumber$Chromosome))
