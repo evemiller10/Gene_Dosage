@@ -6,6 +6,8 @@ library(knitr)
 library(foreach)
 
 #Function for creating the GAM models 
+#Expression as response variable
+#CN as smooth term predictor variable
 run.GAM.model <- function(project_name, exp, cn, i){
   #Unlist the data
   exp[i,] -> exp
@@ -13,7 +15,7 @@ run.GAM.model <- function(project_name, exp, cn, i){
   exp.data.unlist <- unlist(exp)
   seg.means.unlist <- unlist(cn)
   
-  #Combing all data to call as data = combined.df
+  #Combining all data to call as data = combined.df
   combined.df <- data.frame( exp.data.unlist,
                              seg.means.unlist)
   #fit the model
@@ -22,10 +24,6 @@ run.GAM.model <- function(project_name, exp, cn, i){
   return(GAM.model)
 }
 
-#Calling the GAM model function, gene name in [] sets which gene to call the model for
-#Can also use row number
-run.GAM.model(project_name = "ACC", exp = filt.matched.ACC.exp.assay.data.df["ENSG00000102144.15",],
-              cn = filt.matched.ACC.seg.means.df["ENSG00000102144.15",], 1) -> GAM.test.model.negative
 ################################################################################
 
 #Function for creating relevant outputs of GAMs
@@ -47,26 +45,18 @@ run.GAM <- function(project_name, exp, cn, i){
 
   
   #Create output data frame
-  out.df <- c(GCV = GAM.model$gcv.ubre, n = temp.summary$n, 
-              p.coeff = temp.p.table[1], std.error = temp.p.table[2], 
-              t.val = temp.p.table[3], chi.sq = temp.summary$chi.sq,
-              deviance = temp.summary$dev.expl,
-              degrees.freedom = temp.summary$edf, F.statistic = temp.s.table[3],
-              smooth.term.p =temp.s.table[4], AIC = AIC(GAM.model))
+  out.df <- c(intercept.coeff = temp.summary$p.coeff,
+              edf = temp.s.table[1, "edf"], reference.df = temp.s.table[1, "Ref.df"],
+              F.statistic = temp.s.table[1, "F"], p.val.F = temp.s.table[1, "p-value"],
+              AIC = GAM.model$aic, deviance.explained = temp.summary$dev.expl)
   
   return(out.df)
   }, error = function(e) {
   #If an error occurs it will print the error message and returns NULL
     print(paste("Error in row", project_name, ":", e$message))
-    return(rep(NA,11))
+    return(rep(NA,7))
 })
 }
- 
-
-#Call run.GAM function row-wise (per gene)
-ACC_GAM_results <- foreach(i = 1:nrow(filt.matched.ACC.exp.assay.data.df), .combine = rbind)%do%{
-  run.GAM(project_name = "ACC", filt.matched.ACC.exp.assay.data.df[i,],
-          filt.matched.ACC.seg.means.df[i,], i)}
 
 #Putting rownames as ensembl gene IDs
 rownames(ACC_GAM_results) <- rownames(filt.matched.ACC.exp.assay.data.df)
