@@ -6,26 +6,45 @@ library(knitr)
 library(foreach)
 
 #Using GAM argument to create linear model
-#Function for creating the GAM models 
+#Function for running a linear model
 run.LM.model <- function(project_name, exp, cn, i){
+  
   #Unlist the data
   exp[i,] -> exp
   cn[i,] -> cn
   exp.data.unlist <- unlist(exp)
   seg.means.unlist <- unlist(cn)
+  
+  #Combining data so can return a data frame of expression and CN data
+  #Needed for plotting of LM
+  combined.df <- data.frame( exp.data.unlist,
+                             seg.means.unlist)
+  
   #fit the model
   LM.model <- gam(exp.data.unlist ~ seg.means.unlist)
-  return(LM.model)
+  return(list(model = LM.model, data = data.frame(seg.means.unlist,
+                                                  exp.data.unlist)))
 }
 
-run.LM.model(project_name = "ACC", exp = filt.matched.ACC.exp.assay.data.df["ENSG00000001036.14", ],
-             cn = filt.matched.ACC.seg.means.df["ENSG00000001036.14", ], 1) -> LM.test.model
+#Call for running ACC LM model
+run.LM.model(project_name = "ACC", exp = filt.matched.ACC.exp.assay.data.df[2, ],
+             cn = filt.matched.ACC.seg.means.df[2, ], 1) -> LM.test.model
 
-plot(LM.test.model)
+#Plotting the linear model
+#No automatic plot function as for gam with smooth functions
+#Have to return expression and CN data as dataframes then plot using these
+plot(LM.test.model$data$seg.means.unlist, LM.test.model$data$exp.data.unlist, 
+     xlab = "copy number", ylab = "expression")
 
+# Add the regression line to the plot
+abline(LM.test.model$model, col = "red")
 
-###############################################################################
+##############################################################################################
+
+#Function for creating table of LM outputs for each gene in selected tumour type
 run.LM <- function(project_name, exp, cn, i){
+   
+  
   #Unlist the data
   exp.data.unlist <- unlist(exp)
   seg.means.unlist <- unlist(cn)
@@ -42,31 +61,23 @@ run.LM <- function(project_name, exp, cn, i){
     
     
     #Create output data frame
-    out.df <- c(Int.coef = temp.summary$p.coeff["(Intercept)"], 
-                coef = temp.summary$p.coeff["seg.means.unlist"])
+    out.df <- c(Integer.coef = temp.summary$p.table["(Intercept)", "Estimate"], 
+                seg.means.coef = temp.summary$p.table["seg.means.unlist", "Estimate"], 
+                coef.Std.Error = temp.summary$p.table["seg.means.unlist", "Std. Error"],
+                coef.t.value = temp.summary$p.table["seg.means.unlist", "t value"],
+                coef.p.value = temp.summary$p.table["seg.means.unlist", "Pr(>|t|)"],
+                AIC = LM.model$aic, deviance.explained = temp.summary$dev.expl)
     
     
     return(out.df)
   }, error = function(e) {
     #If an error occurs it will print the error message and returns NULL
     print(paste("Error in row", project_name, ":", e$message))
-    return(rep(NA,2))
+    return(rep(NA,7))
   })
 }
 
-nrow(filt.matched.ACC.exp.assay.data.df)
-#Call run.GAM function row-wise (per gene)
-ACC_LM_results <- foreach(i = 1:nrow(filt.matched.ACC.exp.assay.data.df), .combine = rbind)%do%{
-  run.LM(project_name = "ACC", filt.matched.ACC.exp.assay.data.df[i,],
-         filt.matched.ACC.seg.means.df[i,], i)}
-
-rownames(ACC_LM_results) <- rownames(filt.matched.ACC.exp.assay.data.df)
-
-data.frame(ACC_LM_results) -> ACC_LM_results.df
-
-head(ACC_LM_results.df[order(ACC_LM_results.df$coef.seg.means.unlist, decreasing = F),],10)
-
-#################################################################################
+###########################################################################################
 
 #Adding adjusted p-values to results
 # Adjusting the p-values
@@ -77,7 +88,7 @@ adj.p.value.slope <- p.adjust(ACC_GAM_results[, "p.val.slope"], method = "BH")
 ACC_LM_results$adj.p.value.intercept <- adj.p.value.intercept
 ACC_LM_results$adj.p.value.slope <- adj.p.value.slope
 
-################################################################################
+###########################################################################################
 
 #Save the results to a file
 write.csv(ACC_LM_results, file = "/home/evem/CN_Seg/LM_outputs/ACC_LM_outputs.csv")
@@ -88,53 +99,3 @@ ACC_LM_results_table <- kable(ACC_LM_results_table)
 sink("/home/evem/CN_Seg/LM_outputs/ACC_LM_results_table")
 print(kable(ACC_LM_results_table))
 sink()
-
-################################################################################
-#Function for creating the Linear models 
-run.LM.model <- function(project_name, x, y, i){
-  #Unlist the data
-  x[i,] -> x
-  y[i,] -> y
-  exp.data.unlist <- unlist(x)
-  seg.means.unlist <- unlist(y)
-  #fit the model
-  LM.model <- lm(exp.data.unlist ~ seg.means.unlist)
-  return(LM.model)
-  
-}
-
-run.LM.model(project_name = "ACC", x = filt.matched.ACC.exp.assay.data.df["ENSG00000001036.14",],
-             y = filt.matched.ACC.seg.means.df["ENSG00000001036.14",], 1) -> LM.test.model.x
-
-run.LM <- function(project_name, x, y, i){
-  #Unlist the data
-  exp.data.unlist <- unlist(x)
-  seg.means.unlist <- unlist(y)
-  
-  #Catch any errors
-  tryCatch({
-    
-    #fit the model
-    LM.model <- lm(exp.data.unlist ~ seg.means.unlist)
-    
-    #Get the summary
-    temp.summary <- summary(GAM.model)
-    temp.p.table <- temp.summary$p.table
-    temp.s.table <- temp.summary$s.table
-    
-    
-    #Create output data frame
-    out.df <- c(seg.means.coeff = GAM.model$coefficients[,2], 
-                intercept.coeff = GAM.model$coefficients[,1])
-    
-    return(out.df)
-  }, error = function(e) {
-    #If an error occurs it will print the error message and returns NULL
-    print(paste("Error in row", project_name, ":", e$message))
-    return(rep(NA,2))
-  })
-}
-
-ACC_LM_results <- foreach(i = 1:nrow(filt.matched.ACC.exp.assay.data.df), .combine = rbind)%do%{
-  run.LM(project_name = "ACC", filt.matched.ACC.exp.assay.data.df[i,],
-         filt.matched.ACC.seg.means.df[i,], i)}
