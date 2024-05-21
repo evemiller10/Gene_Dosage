@@ -6,7 +6,10 @@ library(knitr)
 library(foreach)
 
 #Function for running GAM model with categorical interaction term
-#Built of use for interactions term being 2 tumour types
+#Expression as response variable
+#CN as smooth term predictor variable
+#Tumour type added as interaction with CN and the joint effect on expression
+#Built for use of interaction term being 2 tumour types
 run.GAM.model.interaction <- function(project_name, exp, cn, covariate, covariate_type, i){
 
   # Unlist the data
@@ -15,9 +18,10 @@ run.GAM.model.interaction <- function(project_name, exp, cn, covariate, covariat
   #covariate[i,] -> covariate
   exp.data.unlist <- unlist(exp)
   seg.means.unlist <- unlist(cn)
+  #Covariate called as factor variable as is categorical
   covariate.unlist <- as.factor(unlist(covariate))
   
-  #Combing all data to call as data = combined.df
+  #Combining all data to call as data = combined.df
   combined.df <- data.frame( exp.data.unlist,
                     seg.means.unlist,
                     covariate.unlist
@@ -25,27 +29,22 @@ run.GAM.model.interaction <- function(project_name, exp, cn, covariate, covariat
   library(dplyr)
 
   # Fit the model
-  if (covariate_type == "linear") {
+  if (covariate_type == "factor") {
     GAM.model <- gam(exp.data.unlist ~ covariate.unlist + 
                        s(seg.means.unlist, by = covariate.unlist), 
                      data = combined.df, method = "REML") 
-  } else if (covariate_type == "smooth") {
-    GAM.model <- gam(exp.data.unlist ~ s(seg.means.unlist, covariate.unlist), 
+  } else if (covariate_type == "continuous") {
+    GAM.model <- gam(exp.data.unlist ~ s(seg.means.unlist, by = covariate.unlist), 
                      data = combined.df, method = "REML")
   } else {
-    stop("Invalid covariate type. Choose 'linear' or 'smooth'.")
+    stop("Invalid covariate type. Choose 'factor' or 'continuous'.")
   }
   
   return(GAM.model)
 }
 
-#Calling the GAM with covariate model function
-run.GAM.model.interaction(project_name = "ESCA", filt.joined.exp.data.ESCA.ACC[1,],
-                                                    filt.joined.cn.data.ESCA.ACC[1,], 
-                                         covariate = joined.tumour.type.ESCA.ACC, 
-                                         covariate_type = "linear", 1) -> row.test.interaction.model
-
 ################################################################################
+
 #Function for creating relevant outputs of GAMs with categorical intercation term
 run.GAM.interaction <- function(project_name, exp, cn, covariate, covariate_type, i){
  
@@ -54,7 +53,7 @@ run.GAM.interaction <- function(project_name, exp, cn, covariate, covariate_type
   seg.means.unlist <- unlist(cn)
   covariate.unlist <- as.factor(covariate)
   
-  #Combing all data to call as data = combined.df
+  #Combining all data to call as data = combined.df
   combined.df <- data.frame( exp.data.unlist,
                              seg.means.unlist,
                              covariate.unlist
@@ -66,14 +65,14 @@ run.GAM.interaction <- function(project_name, exp, cn, covariate, covariate_type
     library(dplyr)
     
     # Fit the model
-    if (covariate_type == "linear") {
+    if (covariate_type == "factor") {
       GAM.model <- gam(exp.data.unlist ~ covariate.unlist + s(seg.means.unlist, 
                       by = covariate.unlist), data = combined.df, method = "REML") 
-    } else if (covariate_type == "smooth") {
+    } else if (covariate_type == "continuous") {
       GAM.model <- gam(exp.data.unlist ~ s(seg.means.unlist, covariate.unlist), 
                        data = combined.df, method = "REML")
     } else {
-      stop("Invalid covariate type. Choose 'linear' or 'smooth'.")
+      stop("Invalid covariate type. Choose 'factor' or 'continuous'.")
     }
     
     
@@ -102,13 +101,6 @@ run.GAM.interaction <- function(project_name, exp, cn, covariate, covariate_type
     return(rep(NA,14))
   })
 }
-
-
-#Call run.GAM function row-wise (per gene)
-ESCA_interaction_GAM_results <- foreach(i = 1:nrow(filt.joined.exp.data.ESCA.ACC), .combine = rbind)%do%{
-   run.GAM.interaction(project_name = "ESCA", exp = filt.joined.exp.data.ESCA.ACC[i,], 
-                       cn = filt.joined.cn.data.ESCA.ACC[i,], 
-                      covariate = joined.tumour.type.ESCA.ACC, covariate_type = "linear")}
 
 #Putting rownames as gene names
 rownames(ESCA_interaction_GAM_results) <- rownames(filt.joined.exp.data.ESCA.ACC)
