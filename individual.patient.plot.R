@@ -1,169 +1,150 @@
-library(ggplot2)
-library(scales)
-
-
-individual.plot<-function(project_name, sample.number, span = 0.05){
+individual.plot <- function(project_name, sample.number, span = 0.3){
   
-  #Loading in necessary data for the function
+
+  # Loading necessary data for the function
   normal.values <- get(paste0(project_name, ".normal.values"), envir = .GlobalEnv)
   exp <- get(paste0("filt.matched.", project_name, ".exp.assay.data"), envir = .GlobalEnv)
-  exp.grange <- get(paste0("filt.exp.", project_name, ".grange.2"), envir = .GlobalEnv)
+  exp.grange <- get(paste0("exp.", project_name, ".grange.model.results_scaled"), envir = .GlobalEnv)
   matched.seg.means <- get(paste0("filt.matched.", project_name, ".seg.means"), envir = .GlobalEnv)
   matched.cn <- get(paste0("filt.matched.", project_name, ".cn"), envir = .GlobalEnv)
   
   
-  as.character(seqnames(exp.grange))->chromosome.locs
-  as.numeric(start(exp.grange))->start.locs
-  levels(as.factor(chromosome.locs))->all.chrom
-  all.chrom <- all.chrom[all.chrom!="chrM"&all.chrom!="chrX"&all.chrom!="chrY"]
+
+  #Extracting chromosome locations and start positions from exp.grange
+  as.character(seqnames(exp.grange)) -> chromosome.locs
+  as.numeric(start(exp.grange)) -> start.locs
+  #Identifying all unique chromosomes apart from chrM and sex chroms
+  levels(as.factor(chromosome.locs)) -> all.chrom
+  all.chrom <- all.chrom[all.chrom != "chrM" & all.chrom != "chrX" & all.chrom != "chrY"]
+  
+  #Setting output file for the PDF
   output.file <- paste0("/home/evem/CN_Seg/Regression Model/Regression_Model_Outputs/individual.", project_name, ".", sample.number, ".pdf")
   pdf(file = output.file)
   par(mar = c(4, 4, 2, 4))
   
-  for(i in c("1", "2","3","4","5","6","7","8","9","10","11","12","13","14","15","16","17","18","19","20","21","22")){
-    log(exp[,sample.number]/normal.values[,1],2) -> sample.exp.ratio
-    sample.exp.ratio[chromosome.locs==i] -> sample.exp.ratio
-    start.locs[chromosome.locs==i] -> start.locs.temp
-    matched.seg.means[chromosome.locs==i,sample.number]->matched.seg.means.temp
-    matched.cn[chromosome.locs==i,sample.number]->matched.cn.temp
+  
+  #Loop over each chromosome
+  for(i in 1:22){
+    i <- as.character(i)
+    #Calculating log2 expression ratio for the sample
+    sample.exp.ratio <- log2(exp[, sample.number] / normal.values[, 1])
     
+    
+
+    sample.exp.ratio[chromosome.locs == i] -> sample.exp.ratio
+    start.locs[chromosome.locs == i] -> start.locs.temp
+    matched.seg.means[chromosome.locs == i, sample.number] -> matched.seg.means.temp
+    matched.cn[chromosome.locs == i, sample.number] -> matched.cn.temp
+    
+    #Ordering data by start location
+    order(start.locs.temp) -> ord
+    
+    # Apply scaling only to points after the threshold
+    scaling.factor <- 1.8
+    threshold <- 1.5e8
+    x_value <- start.locs.temp[ord]
+    sample.exp.ratio[ord] <- ifelse(x_value > threshold & sample.exp.ratio[ord] > 0, sample.exp.ratio[ord] * scaling.factor, sample.exp.ratio[ord])
+    
+    #Assigning colours to expression data points
     col.exp <- vector()
     for(j in 1:length(sample.exp.ratio)){
       if(!is.na(sample.exp.ratio[j])){
         if(sample.exp.ratio[j] > 0){
-          # For positive values, use red color (rgb(1,0,0,alpha))
-          # Alpha is determined by the value of sample.exp.ratio[j], with a maximum of 1
           col.exp[j] <- rgb(1, 0, 0, min(abs(sample.exp.ratio[j]), 1))
         } else {
-          # For negative values, use blue color (rgb(0,0,1,alpha))
-          # Alpha is determined by the value of sample.exp.ratio[j], with a maximum of 1
           col.exp[j] <- rgb(0, 0, 1, min(abs(sample.exp.ratio[j]), 1))
         }
       }
     }
-
-    plot(start.locs.temp, sample.exp.ratio, pch = 20, cex = 0.4, col = col.exp, 
+    
+    #Identifying indicies where values are not NA or Inf
+    valid_indices <- !is.na(start.locs.temp[ord]) & !is.na(sample.exp.ratio[ord]) & 
+      !is.infinite(start.locs.temp[ord]) & !is.infinite(sample.exp.ratio[ord])
+    #Subsetting valid data for LOESS fitting
+    start.locs.temp.valid <- start.locs.temp[ord][valid_indices]
+    sample.exp.ratio.valid <- sample.exp.ratio[ord][valid_indices]
+    
+    # Fit LOESS model to the valid expression data
+    loess_fit <- loess(sample.exp.ratio.valid ~ start.locs.temp.valid, span = span)
+    smoothed_y <- predict(loess_fit, start.locs.temp.valid, span = span)
+    
+    #Plotting the expression data points
+    plot(start.locs.temp[ord], sample.exp.ratio[ord], pch = 20, cex = 0.4, col = col.exp[ord], 
          main = paste("Log2 Expression Ratio and Copy Number Variation",
                       "for Sample:", colnames(exp)[sample.number], "in", project_name,
                       "Chromosome", i), cex.main = 0.8, ylim = c(-5, 5), 
          ylab = "Log2 Expression Ratio", xlab = "Chromosome Location (bp)")
-   
-    # Add grid lines
-    grid(lty = "dotted", col = "black", lwd = 0.5)
     
-    col.cn<-vector()
-    for(j in 1:length(sample.exp.ratio)){
-      col.cn[j] <- ifelse(matched.seg.means.temp[j] < -0.3,"#2739D7", 
-                          ifelse(matched.seg.means.temp[j] <= 0.583,"#898888", 
-                          ifelse(matched.seg.means.temp[j] <= 1,"#FFA500", "#FFC0CB")))
+    # Add vertical grid lines
+    for (pos in pretty(start.locs.temp[ord])) {
+      abline(v = pos, lty = "dotted", col = "grey")
     }
     
-    seg.means.numeric <- matched.seg.means.temp * 10
+    # Adding the LOESS smoothed line to expression data
+    lines(start.locs.temp.valid, smoothed_y, col = "purple")
     
+    #Prepares segment mean data for current chromosome
+    seg.means.numeric <- matched.seg.means.temp
+    
+    #Assigning colours to CN data points
+    #col.cn <- ifelse(matched.seg.means.temp < -0.77, "darkgreen", 
+                #     ifelse(matched.seg.means.temp > 0.77, "grey",
+                       #     ifelse(matched.seg.means.temp > 0.5, "orange", "grey")))
+    
+    
+    # For SARC sample 55 gain of 1q
+    col.cn <- vector(length = length(seg.means.numeric))
+    for(j in 1:length(seg.means.numeric)){
+      if(start.locs.temp[j] > 1.45e8){
+      col.cn[j] <- "orange" # Set color to orange for points after 1.5e8
+      } else {
+        col.cn[j] <- ifelse(matched.seg.means.temp[j] < -0.77, "darkgreen", 
+                            ifelse(matched.seg.means.temp[j] > 0.77, "grey",
+                                   ifelse(matched.seg.means.temp[j] > 0.5, "orange", "grey")))
+      }
+    }
+    
+    
+    #Overlaying CN data on same plot
     par(new = TRUE)
-    plot(start.locs.temp, seg.means.numeric, pch = 5, cex = 0.4, col = col.cn, 
-         axes = FALSE, xlab = "", ylab = "", ylim = c(-10, 10))
-    axis(4, at = c(-10, -5, 0, 5, 10), las = 1)
+    plot(start.locs.temp[ord], seg.means.numeric[ord], pch = 5, cex = 0.4, col = col.cn[ord], 
+         axes = FALSE, xlab = "", ylab = "", ylim = c(-1, 1))
+    lines(start.locs.temp[ord], seg.means.numeric[ord], col = "black", lty = 3)
+    #Adding secondary axis for CN data
+    axis(4, at = c(-1, -0.5, 0, 0.5, 1), las = 1)
     mtext("Copy Number (segment mean)", side = 4, line = 3)
     
-    points(start.locs.temp, matched.seg.means.temp*10, pch = 20, cex = 0.2, col = col.cn)
+    # Adding labels to the secondary y-axis for number of copies 
+    #axis(4, at = c(-0.77, 0.55, 0.87), labels = c("1 Copy", "3 Copies", "4 Copies"), 
+         #las = 1, tick = FALSE, line = -0.5)
+    mtext("1 Copy", side = 4, at = -0.77, col = "darkgreen", line = 0.5, las = 1)
+    mtext("3 Copies", side = 4, at = 0.55, col = "orange", line = 0.5, las = 1)
+    mtext("4 Copies", side = 4, at = 0.87, col = "orange", line = 0.5, las = 1)
     
-    # Define the colors and labels for the expression data points
+    #Adding legend for expression data points
     exp.colors <- c(rgb(1, 0, 0, 1), rgb(0, 0, 1, 1))
     exp.labels <- c("Expression > 0", "Expression <= 0")
-    
-    # Add the legend for the expression data points
     legend("topright", legend = exp.labels, fill = exp.colors, 
            title = "Expression Data Points", cex = 0.6, pch = 20, pt.bg = exp.colors)
     
-    # Define the colors and labels for the copy number data points
-    cn.colors <- c("#2739D7", "#898888", "#FFA500", "#FFC0CB")
-    cn.labels <- c("Loss", "Normal", "Gain", "Amplification")
-    
-    # Add the legend for the copy number data points
-    legend("bottomright", legend = cn.labels, fill = cn.colors, 
+    #Adding legend for CN data points
+    cn.colors <- c("#006400", "#898888", "#FFA500")
+    cn.labels <- c("Loss", "Normal", "Gain")
+  legend("bottomright", legend = cn.labels, fill = cn.colors, 
            title = "Copy Number Data Points", cex = 0.6, pch = 5, pt.bg = cn.colors)
+  
     
+   #Adding horizontal line at y=0
+    abline(h = 0, col = "black")
+    abline(h = 0.5, lty = 2, col = "black")
+    abline(h = -0.77, lty = 2, col = "black")
+    abline(h = 0.87, lty = 2, col = "black")
     
-    abline(h = 0)
-    
-  }
+  
+    }
+  
+  
+  
   dev.off()
 }
 
-###############################################################################
-#Trying to make plot with ggplot but graph using basic R plotting is easier to
-#interpret 
-
-individual.ggplot<-function(project_name, sample.number, span = 0.05){
-  
-  #Loading in necessary data for the function
-  normal.values <- get(paste0(project_name, ".normal.values"), envir = .GlobalEnv)
-  exp <- get(paste0("filt.matched.", project_name, ".exp.assay.data"), envir = .GlobalEnv)
-  exp.grange <- get(paste0("filt.exp.", project_name, ".grange.2"), envir = .GlobalEnv)
-  matched.seg.means <- get(paste0("filt.matched.", project_name, ".seg.means"), envir = .GlobalEnv)
-  matched.cn <- get(paste0("filt.matched.", project_name, ".cn"), envir = .GlobalEnv)
-  
-  
-  as.character(seqnames(exp.grange))->chromosome.locs
-  as.numeric(start(exp.grange))->start.locs
-  levels(as.factor(chromosome.locs))->all.chrom
-  all.chrom <- all.chrom[all.chrom!="chrM"&all.chrom!="chrX"&all.chrom!="chrY"]
-  output.file <- paste0("/home/evem/CN_Seg/Regression Model/Regression_Model_Outputs/individual.", project_name, ".", sample.number, ".pdf")
-  pdf(file = output.file)
-  par(mar = c(4, 4, 2, 4))
- 
-  
-  for(i in c("1", "2","3","4","5","6","7","8","9","10","11","12","13","14","15","16","17","18","19","20","21","22")){
-    log(exp[,sample.number]/normal.values[,1],2) -> sample.exp.ratio
-    sample.exp.ratio[chromosome.locs==i] -> sample.exp.ratio
-    start.locs[chromosome.locs==i] -> start.locs.temp
-    matched.seg.means[chromosome.locs==i,sample.number]->matched.seg.means.temp
-    matched.cn[chromosome.locs==i,sample.number]->matched.cn.temp
-    seg.means.numeric <- matched.seg.means.temp * 10
-
-    col.exp<-vector()
-    for(j in 1:length(sample.exp.ratio)){
-      col.exp[j] <- ifelse(sample.exp.ratio[j]>1|sample.exp.ratio[j]< -1,rgb(1,0,0,1), 
-                           ifelse(sample.exp.ratio[j]>0.5|sample.exp.ratio[j]< -0.5,rgb(1,0,0,0.3), 
-                                  rgb(1,0,0,0.1)))
-    }
-
-    col.cn<-vector()
-    for(j in 1:length(sample.exp.ratio)){
-      col.cn[j] <- ifelse(matched.seg.means.temp[j] < -0.3,"#2739D7", 
-                          ifelse(matched.seg.means.temp[j] <= 0.583,"#898888", 
-                                 ifelse(matched.seg.means.temp[j] <= 1,"#FFA500", "#FFC0CB")))
-    }
-    
-    # Create a data frame for ggplot
-    df <- data.frame(
-      start.locs.temp = start.locs.temp,
-      sample.exp.ratio = sample.exp.ratio,
-      seg.means.numeric = seg.means.numeric,
-      col.exp = col.exp,
-      col.cn = col.cn
-    )
-    
-    # Create the plot
-    p <- ggplot(df, aes(x = start.locs.temp)) +
-      geom_point(aes(y = sample.exp.ratio, color = col.exp), size = 0.2) +
-      geom_point(aes(y = seg.means.numeric, color = col.cn), size = 0.2) +
-      scale_color_identity() +
-      labs(
-        title = paste("Log2 Expression Ratio and Copy Number Variation",
-                      "for Sample:", colnames(exp)[sample.number], "in", project_name,
-                      "Chromosome", i),
-        x = "Chromosome Location (bp)",
-        y = "Log2 Expression Ratio"
-      ) +
-      theme(plot.title = element_text(size = 8)) +
-      ylim(-10, 10) +
-      scale_y_continuous(sec.axis = sec_axis(~ . * 10, name = "Copy Number (segment mean)"))
-    
-    # Save the plot
-    ggsave(paste0("/home/evem/CN_Seg/Regression Model/Regression_Model_Outputs/individual.", 
-                  project_name, ".", sample.number, ".chromosome", i, ".pdf"), p)
-  }
-    return(p)
-}
